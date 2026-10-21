@@ -1,0 +1,1323 @@
+import * as React from "react"
+import { addPropertyControls, ControlType } from "framer"
+
+/**
+ * User request summary:
+ * Create a self-contained Framer component named PlumeEditor for a French interactive demonstration writing tool.
+ * Include local-only deterministic typo corrections, approval and pricing modals, free-word limits, accessible UI, clipboard copy,
+ * and explicit non-AI/non-payment messaging in a polished editorial layout with configurable brand, heading/body typography, and key colors.
+ */
+
+interface MyComponentProps {
+    brand: string
+    logo?: { src?: string; srcSet?: string; alt?: string }
+    logoWidth: number
+    title: string
+    subtitle: string
+    paperColor: string
+    inkColor: string
+    accentColor: string
+    bodyFont: any
+    headingFont: any
+    style?: React.CSSProperties
+}
+
+type ModalType = "approval" | "pricing" | null
+
+type ChangeRow = {
+    original: string
+    proposition: string
+    categorie: string
+    explication: string
+}
+
+type AdditionOption = {
+    id: number
+    label: string
+    sentencePro: string
+    sentenceEng: string
+}
+
+const DEMO_SAMPLE_TEXT =
+    "Bonjour,\nsa va ? Je pense que sa peut aider les personne qui hésitent à écrire. Il y a beaucoup de chose à clarifier avant l’envoi du message final."
+
+const DEMO_ADDITIONS: AdditionOption[] = [
+    {
+        id: 0,
+        label: "L’objectif est de rendre la rédaction plus accessible.",
+        sentencePro: "L’objectif est de rendre la rédaction plus accessible.",
+        sentenceEng:
+            "L’objectif est de rendre la rédaction plus accessible, pour faciliter la compréhension dès la première lecture.",
+    },
+    {
+        id: 1,
+        label: "Commencez par clarifier le message que vous souhaitez transmettre.",
+        sentencePro:
+            "Commencez par clarifier le message que vous souhaitez transmettre.",
+        sentenceEng:
+            "Commencez par clarifier le message que vous souhaitez transmettre, afin d’orienter immédiatement votre lecteur.",
+    },
+    {
+        id: 2,
+        label: "Je reste disponible pour poursuivre cet échange.",
+        sentencePro: "Je reste disponible pour poursuivre cet échange.",
+        sentenceEng:
+            "Je reste disponible pour poursuivre cet échange et ajuster le texte selon vos retours.",
+    },
+]
+
+const DEMO_REWRITE_PRO_BASE = `Bonjour,\n\nÇa va ? Je pense que cela peut aider les personnes qui hésitent à écrire. Il y a beaucoup de choses à clarifier avant l’envoi du message final.\n\nBien cordialement,`
+
+const DEMO_REWRITE_ENGAGED_BASE = `Bonjour,\n\nÇa va ? Je pense que ça peut vraiment aider les personnes qui hésitent à écrire. Il y a beaucoup de choses à clarifier avant l’envoi du message final.\n\nMerci d’avance pour votre retour !`
+
+const TYPO_RULES = [
+    {
+        from: "sa va",
+        to: "ça va",
+        categorie: "Orthographe",
+        explication: "« ça » est le pronom démonstratif approprié.",
+    },
+    {
+        from: "les personne",
+        to: "les personnes",
+        categorie: "Accord",
+        explication: "Le nom doit être au pluriel après « les ».",
+    },
+    {
+        from: "je pense que sa",
+        to: "je pense que ça",
+        categorie: "Orthographe",
+        explication: "« ça » remplace ici le pronom incorrect « sa ».",
+    },
+    {
+        from: "beaucoup de chose",
+        to: "beaucoup de choses",
+        categorie: "Accord",
+        explication: "Après « beaucoup de », le nom est au pluriel ici.",
+    },
+]
+
+function countWords(text: string): number {
+    const trimmed = text.trim()
+    if (!trimmed) return 0
+    return trimmed.split(/\s+/).filter(Boolean).length
+}
+
+function runDeterministicCorrections(text: string): {
+    corrected: string
+    rows: ChangeRow[]
+} {
+    let corrected = text
+    const rows: ChangeRow[] = []
+
+    TYPO_RULES.forEach((rule) => {
+        const escaped = rule.from.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+        const regex = new RegExp(
+            `(^|[^\\p{L}\\p{N}_])(${escaped})(?=$|[^\\p{L}\\p{N}_])`,
+            "giu"
+        )
+        const before = corrected
+        corrected = corrected.replace(
+            regex,
+            (fullMatch, prefix: string, term: string) => {
+                const first = term.charAt(0)
+                const replacement =
+                    first === first.toUpperCase()
+                        ? `${rule.to.charAt(0).toUpperCase()}${rule.to.slice(1)}`
+                        : rule.to
+                return `${prefix}${replacement}`
+            }
+        )
+        if (before !== corrected) {
+            rows.push({
+                original: rule.from,
+                proposition: rule.to,
+                categorie: rule.categorie,
+                explication: rule.explication,
+            })
+        }
+    })
+
+    return { corrected, rows }
+}
+
+function isSampleText(text: string): boolean {
+    return text.trim() === DEMO_SAMPLE_TEXT.trim()
+}
+
+function applyFont(font: any, fallbackFamily: string): React.CSSProperties {
+    return {
+        fontFamily: font?.fontFamily || fallbackFamily,
+        fontSize: font?.fontSize,
+        lineHeight: font?.lineHeight,
+        letterSpacing: font?.letterSpacing,
+        textAlign: font?.textAlign,
+        fontWeight: font?.fontWeight,
+        fontStyle: font?.fontStyle,
+    }
+}
+
+function useModalA11y(
+    isOpen: boolean,
+    containerRef: React.RefObject<HTMLDivElement>,
+    onClose: () => void
+): void {
+    React.useEffect(() => {
+        if (!isOpen) return
+        const previousActive =
+            typeof document !== "undefined"
+                ? (document.activeElement as HTMLElement | null)
+                : null
+        const container = containerRef.current
+        if (!container) return
+
+        const focusables = container.querySelectorAll<HTMLElement>(
+            'button, [href], input, textarea, select, [tabindex]:not([tabindex="-1"])'
+        )
+        const first = focusables[0]
+        const last = focusables[focusables.length - 1]
+        first?.focus()
+
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") {
+                event.preventDefault()
+                React.startTransition(() => onClose())
+                return
+            }
+            if (event.key === "Tab" && first && last) {
+                if (event.shiftKey && document.activeElement === first) {
+                    event.preventDefault()
+                    last.focus()
+                } else if (!event.shiftKey && document.activeElement === last) {
+                    event.preventDefault()
+                    first.focus()
+                }
+            }
+        }
+
+        if (typeof window !== "undefined") {
+            window.addEventListener("keydown", onKeyDown)
+        }
+        return () => {
+            if (typeof window !== "undefined") {
+                window.removeEventListener("keydown", onKeyDown)
+            }
+            previousActive?.focus?.()
+        }
+    }, [isOpen, containerRef, onClose])
+}
+
+/**
+ * @framerSupportedLayoutWidth any-prefer-fixed
+ * @framerSupportedLayoutHeight auto
+ */
+export default function PlumeEditor(props: MyComponentProps) {
+    const {
+        brand,
+        logo,
+        logoWidth,
+        title,
+        subtitle,
+        paperColor,
+        inkColor,
+        accentColor,
+        bodyFont,
+        headingFont,
+        style,
+    } = props
+
+    const [text, setText] = React.useState("")
+    const [synthesis, setSynthesis] = React.useState("")
+    const [correctedText, setCorrectedText] = React.useState("")
+    const [changeRows, setChangeRows] = React.useState<ChangeRow[]>([])
+    const [approved, setApproved] = React.useState(false)
+    const [selectedAdditions, setSelectedAdditions] = React.useState<number[]>(
+        []
+    )
+    const [modal, setModal] = React.useState<ModalType>(null)
+    const [premiumSimulated, setPremiumSimulated] = React.useState(false)
+    const [copyStatus, setCopyStatus] = React.useState("")
+    const [copyError, setCopyError] = React.useState("")
+
+    const modalRef = React.useRef<HTMLDivElement>(null)
+    const closeModal = React.useCallback(() => {
+        React.startTransition(() => setModal(null))
+    }, [])
+
+    const words = React.useMemo(() => countWords(text), [text])
+    const overLimit = words >= 400 && !premiumSimulated
+    const isEmpty = words === 0
+    const canAnalyze = !isEmpty && !approved
+
+    useModalA11y(modal !== null, modalRef, closeModal)
+
+    const invalidateResults = React.useCallback(() => {
+        React.startTransition(() => {
+            setSynthesis("")
+            setCorrectedText("")
+            setChangeRows([])
+            setApproved(false)
+            setSelectedAdditions([])
+            setCopyStatus("")
+            setCopyError("")
+        })
+    }, [])
+
+    const handleTextChange = React.useCallback(
+        (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+            const next = event.target.value
+            React.startTransition(() => setText(next))
+            invalidateResults()
+        },
+        [invalidateResults]
+    )
+
+    const handleReset = React.useCallback(() => {
+        React.startTransition(() => setText(""))
+        invalidateResults()
+    }, [invalidateResults])
+
+    const handleLoadExample = React.useCallback(() => {
+        React.startTransition(() => setText(DEMO_SAMPLE_TEXT))
+        invalidateResults()
+    }, [invalidateResults])
+
+    const handleAnalyze = React.useCallback(() => {
+        if (overLimit) {
+            React.startTransition(() => setModal("pricing"))
+            return
+        }
+        const sample = isSampleText(text)
+        const summary = sample
+            ? "Synthèse éditoriale : votre intention est claire, mais quelques accords et formulations peuvent être resserrés pour gagner en crédibilité et en fluidité."
+            : "Synthèse éditoriale : démonstration locale uniquement. Le texte est conservé dans votre navigateur et la synthèse reste générale, sans analyse sémantique personnalisée."
+        const result = runDeterministicCorrections(text)
+        React.startTransition(() => {
+            setSynthesis(summary)
+            setCorrectedText(result.corrected)
+            setChangeRows(result.rows)
+            setModal("approval")
+        })
+    }, [overLimit, text])
+
+    const toggleAddition = React.useCallback((id: number) => {
+        React.startTransition(() => {
+            setSelectedAdditions((prev) =>
+                prev.includes(id)
+                    ? prev.filter((currentId) => currentId !== id)
+                    : [...prev, id]
+            )
+        })
+    }, [])
+
+    const handleApprove = React.useCallback(() => {
+        React.startTransition(() => {
+            setApproved(true)
+            setModal(null)
+        })
+    }, [])
+
+    const additionsList = React.useMemo(() => DEMO_ADDITIONS, [])
+
+    const appliedAdditions = React.useMemo(
+        () =>
+            selectedAdditions
+                .map((index) => additionsList[index]?.label)
+                .filter(Boolean),
+        [selectedAdditions, additionsList]
+    )
+
+    const rewriteA = React.useMemo(() => {
+        if (!approved) return ""
+        if (isSampleText(text)) {
+            const selectedSentences = selectedAdditions
+                .map(
+                    (id) =>
+                        additionsList.find((item) => item.id === id)
+                            ?.sentencePro
+                )
+                .filter(Boolean)
+            return [DEMO_REWRITE_PRO_BASE, ...selectedSentences].join("\n\n")
+        }
+        return `${correctedText}\n\n[Démo] Réécriture automatique indisponible pour ce texte dans cette version locale.`
+    }, [approved, text, correctedText, selectedAdditions, additionsList])
+
+    const rewriteB = React.useMemo(() => {
+        if (!approved) return ""
+        if (isSampleText(text)) {
+            const selectedSentences = selectedAdditions
+                .map(
+                    (id) =>
+                        additionsList.find((item) => item.id === id)
+                            ?.sentenceEng
+                )
+                .filter(Boolean)
+            return [DEMO_REWRITE_ENGAGED_BASE, ...selectedSentences].join(
+                "\n\n"
+            )
+        }
+        return `${correctedText}\n\n[Démo] Variante engageante indisponible sans moteur externe. Aucun contenu n’a été inventé.`
+    }, [approved, text, correctedText, selectedAdditions, additionsList])
+
+    const handleCopy = React.useCallback(
+        async (label: string, content: string) => {
+            if (typeof window === "undefined" || !window.navigator?.clipboard) {
+                React.startTransition(() => {
+                    setCopyError("Copie indisponible sur cet environnement.")
+                    setCopyStatus("")
+                })
+                return
+            }
+            try {
+                await window.navigator.clipboard.writeText(content)
+                React.startTransition(() => {
+                    setCopyStatus(`Copié : ${label}`)
+                    setCopyError("")
+                })
+            } catch (error) {
+                React.startTransition(() => {
+                    setCopyError(
+                        "La copie a échoué. Sélectionnez le texte manuellement."
+                    )
+                    setCopyStatus("")
+                })
+            }
+        },
+        []
+    )
+
+    const bodyStyle = applyFont(
+        bodyFont,
+        "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+    )
+    const headingStyle = {
+        ...applyFont(headingFont, "Georgia, 'Times New Roman', serif"),
+        fontWeight: headingFont?.fontWeight ?? 400,
+    }
+
+    return (
+        <div
+            className="plume-editor"
+            style={{
+                ...bodyStyle,
+                ...style,
+                position: "relative",
+                width: "100%",
+                background: "#E5F0FA",
+                color: inkColor,
+                boxSizing: "border-box",
+                padding: "8px 20px 32px",
+                display: "flex",
+                flexDirection: "column",
+            }}
+        >
+            <style>{`
+                .plume-editor *:focus-visible {
+                    outline: 2px solid ${accentColor};
+                    outline-offset: 2px;
+                }
+                @media (max-width: 600px) {
+                    .plume-editor { padding: 8px 16px 24px !important; }
+                    .plume-header { flex-wrap: wrap; align-items: flex-start !important; }
+                    .plume-badge { font-size: 9px !important; }
+                    .plume-logo { width: 160px !important; height: auto !important; }
+                    .plume-title { font-size: clamp(36px, 6vw, 60px) !important; }
+                    .plume-alternatives { grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)) !important; }
+                }
+            `}</style>
+            <header
+                className="plume-header"
+                style={{
+                    width: "100%",
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    marginBottom: 32,
+                    gap: 12,
+                }}
+            >
+                <div
+                    style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        flexWrap: "wrap",
+                        minWidth: 0,
+                    }}
+                >
+                    {logo?.src ? (
+                        <img
+                            className="plume-logo"
+                            src={logo.src}
+                            srcSet={logo.srcSet}
+                            alt={logo.alt || brand}
+                            style={{
+                                display: "block",
+                                width: logoWidth,
+                                maxWidth: "100%",
+                                height: "auto",
+                                objectFit: "contain",
+                                mixBlendMode: "multiply",
+                            }}
+                        />
+                    ) : (
+                        <div style={{ ...headingStyle, fontSize: 26 }}>
+                            {brand}
+                        </div>
+                    )}
+                    <span
+                        className="plume-badge"
+                        style={{
+                            fontSize: 11,
+                            textTransform: "uppercase",
+                            letterSpacing: "0.08em",
+                            border: "1px solid #DEDCD2",
+                            padding: "4px 8px",
+                            borderRadius: 999,
+                        }}
+                    >
+                        Démonstration interactive
+                    </span>
+                    {premiumSimulated && (
+                        <span
+                            className="plume-badge"
+                            style={{
+                                fontSize: 11,
+                                textTransform: "uppercase",
+                                letterSpacing: "0.08em",
+                                border: "1px solid #DEDCD2",
+                                padding: "4px 8px",
+                                borderRadius: 999,
+                            }}
+                        >
+                            Accès Premium simulé
+                        </span>
+                    )}
+                </div>
+                <button
+                    type="button"
+                    onClick={() =>
+                        React.startTransition(() => setModal("pricing"))
+                    }
+                    style={{
+                        border: "1px solid #DEDCD2",
+                        background: "#FFFFFF",
+                        color: inkColor,
+                        padding: "10px 14px",
+                        borderRadius: 8,
+                        cursor: "pointer",
+                    }}
+                >
+                    Offre Premium
+                </button>
+            </header>
+            <div style={{ width: "100%", maxWidth: 880, alignSelf: "center" }}>
+                <section style={{ marginTop: 8, marginBottom: 36 }}>
+                    <div
+                        style={{
+                            fontSize: 11,
+                            letterSpacing: "0.12em",
+                            textTransform: "uppercase",
+                            marginBottom: 10,
+                        }}
+                    >
+                        ATELIER DE RÉDACTION
+                    </div>
+                    <h1
+                        className="plume-title"
+                        style={{
+                            ...headingStyle,
+                            margin: "0 0 10px",
+                            fontSize: "clamp(36px, 6vw, 60px)",
+                            whiteSpace: "pre-line",
+                            lineHeight: headingStyle.lineHeight || "1.08em",
+                        }}
+                    >
+                        {title}
+                    </h1>
+                    <p style={{ margin: 0, fontSize: 14, opacity: 0.85 }}>
+                        {subtitle}
+                    </p>
+                </section>
+
+                <section
+                    aria-label="Processus"
+                    style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                        gap: 8,
+                        marginBottom: 26,
+                    }}
+                >
+                    {[
+                        { key: "01", label: "Écrivez", locked: false },
+                        { key: "02", label: "Validez", locked: overLimit },
+                        { key: "03", label: "Affinez", locked: overLimit },
+                    ].map((step) => (
+                        <div
+                            key={step.key}
+                            style={{
+                                borderTop: "1px solid #DEDCD2",
+                                paddingTop: 8,
+                                fontSize: 12,
+                                opacity: step.locked ? 0.45 : 1,
+                            }}
+                        >
+                            <strong style={{ marginRight: 6 }}>
+                                {step.key}
+                            </strong>
+                            {step.label}
+                            {step.locked ? " · Verrouillé" : ""}
+                        </div>
+                    ))}
+                </section>
+
+                <section
+                    style={{
+                        background: paperColor,
+                        border: "1px solid #DEDCD2",
+                        borderRadius: 14,
+                        padding: 20,
+                        marginBottom: 12,
+                    }}
+                >
+                    <div
+                        style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            gap: 12,
+                            marginBottom: 12,
+                        }}
+                    >
+                        <div>
+                            <div style={{ fontSize: 13, marginBottom: 2 }}>
+                                Votre texte
+                            </div>
+                            <div style={{ fontSize: 11, opacity: 0.75 }}>
+                                Moins de 400 mots gratuits
+                            </div>
+                        </div>
+                    </div>
+                    <textarea
+                        aria-label="Zone de rédaction"
+                        value={text}
+                        onChange={handleTextChange}
+                        placeholder="Rédigez ici votre prose en français…"
+                        style={{
+                            width: "100%",
+                            minHeight: 240,
+                            resize: "vertical",
+                            border: "1px solid #DEDCD2",
+                            borderRadius: 10,
+                            padding: 14,
+                            boxSizing: "border-box",
+                            font: "inherit",
+                            color: inkColor,
+                            background: "#FFFEFA",
+                        }}
+                    />
+                    <div
+                        style={{
+                            marginTop: 12,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 8,
+                            flexWrap: "wrap",
+                        }}
+                    >
+                        <div aria-live="polite" style={{ fontSize: 12 }}>
+                            {words} /399 mots
+                        </div>
+                        <div
+                            style={{
+                                display: "flex",
+                                gap: 8,
+                                flexWrap: "wrap",
+                            }}
+                        >
+                            <button
+                                type="button"
+                                onClick={handleReset}
+                                style={{
+                                    border: "1px solid #DEDCD2",
+                                    background: "transparent",
+                                    padding: "8px 10px",
+                                    borderRadius: 8,
+                                    cursor: "pointer",
+                                    color: inkColor,
+                                }}
+                            >
+                                Réinitialiser
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleLoadExample}
+                                style={{
+                                    border: "1px solid #DEDCD2",
+                                    background: "transparent",
+                                    padding: "8px 10px",
+                                    borderRadius: 8,
+                                    cursor: "pointer",
+                                    color: inkColor,
+                                }}
+                            >
+                                Charger un exemple
+                            </button>
+                            <button
+                                type="button"
+                                disabled={!canAnalyze}
+                                onClick={handleAnalyze}
+                                style={{
+                                    border: "1px solid transparent",
+                                    background: accentColor,
+                                    color: "#F7F4EC",
+                                    padding: "8px 14px",
+                                    borderRadius: 8,
+                                    cursor: canAnalyze
+                                        ? "pointer"
+                                        : "not-allowed",
+                                    opacity: canAnalyze ? 1 : 0.5,
+                                }}
+                            >
+                                {overLimit
+                                    ? "Débloquer mon texte"
+                                    : "Analyser mon texte"}
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <p style={{ margin: "0 0 18px", fontSize: 11, opacity: 0.75 }}>
+                    Démonstration interactive locale : votre texte reste dans ce
+                    navigateur, sans transmission externe.
+                </p>
+
+                {overLimit && (
+                    <section
+                        style={{
+                            border: "1px solid #DEDCD2",
+                            borderRadius: 12,
+                            padding: 16,
+                            background: "#FFFEFA",
+                            marginBottom: 16,
+                        }}
+                    >
+                        <p style={{ margin: "0 0 8px", fontSize: 13 }}>
+                            Cette démonstration locale fonctionne sans service
+                            externe ni paiement actif. Au-delà de 399 mots, les
+                            étapes 2 et 3 restent verrouillées dans ce mode.
+                        </p>
+                        <p style={{ margin: "0 0 10px", fontSize: 12 }}>
+                            Limite atteinte ({words} mots). Seuil de
+                            démonstration : 400 mots.
+                        </p>
+                        <div
+                            style={{
+                                fontSize: 12,
+                                lineHeight: 1.5,
+                                marginBottom: 10,
+                            }}
+                        >
+                            14,99 $ premier mois · 11,99 $ mois 2–5 (environ 20
+                            %) · 7,49 $ mois 6+ (environ 50 %)
+                            <br />
+                            Offre fidélité à vie : proposition visible, non
+                            activée dans cette démonstration.
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() =>
+                                React.startTransition(() => setModal("pricing"))
+                            }
+                            style={{
+                                border: "1px solid transparent",
+                                background: accentColor,
+                                color: "#F7F4EC",
+                                padding: "8px 12px",
+                                borderRadius: 8,
+                                cursor: "pointer",
+                            }}
+                        >
+                            Débloquer mon texte
+                        </button>
+                    </section>
+                )}
+
+                {synthesis && !overLimit && (
+                    <section
+                        style={{
+                            border: "1px solid #DEDCD2",
+                            borderRadius: 12,
+                            padding: 16,
+                            background: "#FFFEFA",
+                            marginBottom: 16,
+                        }}
+                    >
+                        <h3
+                            style={{
+                                ...headingStyle,
+                                margin: "0 0 8px",
+                                fontSize: 18,
+                            }}
+                        >
+                            Synthèse éditoriale
+                        </h3>
+                        <p style={{ margin: 0, fontSize: 13 }}>{synthesis}</p>
+                        <p
+                            style={{
+                                margin: "8px 0 0",
+                                fontSize: 11,
+                                opacity: 0.75,
+                            }}
+                        >
+                            Résultats illustratifs de démonstration, non générés
+                            par une IA distante.
+                        </p>
+                    </section>
+                )}
+
+                {approved && !overLimit && (
+                    <>
+                        <section style={{ marginBottom: 16 }}>
+                            <h3
+                                style={{
+                                    ...headingStyle,
+                                    margin: "0 0 8px",
+                                    fontSize: 18,
+                                }}
+                            >
+                                Ajouts validés
+                            </h3>
+                            <div
+                                style={{
+                                    borderTop: "1px solid #DEDCD2",
+                                    paddingTop: 8,
+                                    fontSize: 13,
+                                }}
+                            >
+                                {appliedAdditions.length === 0 ? (
+                                    "Aucun ajout sélectionné."
+                                ) : (
+                                    <ul style={{ margin: 0, paddingLeft: 18 }}>
+                                        {appliedAdditions.map((item, index) => (
+                                            <li key={`${item}-${index}`}>
+                                                {item}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </div>
+                        </section>
+
+                        <section style={{ marginBottom: 16 }}>
+                            <h3
+                                style={{
+                                    ...headingStyle,
+                                    margin: "0 0 8px",
+                                    fontSize: 18,
+                                }}
+                            >
+                                Corrections détectées (démo)
+                            </h3>
+                            <div
+                                style={{
+                                    overflowX: "auto",
+                                    border: "1px solid #DEDCD2",
+                                    borderRadius: 10,
+                                }}
+                            >
+                                <table
+                                    style={{
+                                        width: "100%",
+                                        borderCollapse: "collapse",
+                                        minWidth: 640,
+                                        fontSize: 12,
+                                    }}
+                                >
+                                    <thead>
+                                        <tr>
+                                            {[
+                                                "Original",
+                                                "Proposition",
+                                                "Catégorie",
+                                                "Explication pédagogique",
+                                            ].map((head) => (
+                                                <th
+                                                    key={head}
+                                                    style={{
+                                                        textAlign: "left",
+                                                        borderBottom:
+                                                            "1px solid #DEDCD2",
+                                                        padding: "10px 8px",
+                                                        background: "#F7F4EC",
+                                                    }}
+                                                >
+                                                    {head}
+                                                </th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {changeRows.length === 0 ? (
+                                            <tr>
+                                                <td
+                                                    colSpan={4}
+                                                    style={{ padding: 12 }}
+                                                >
+                                                    Aucune correction détectée
+                                                    par la règle locale de
+                                                    démonstration.
+                                                </td>
+                                            </tr>
+                                        ) : (
+                                            changeRows.map((row, idx) => (
+                                                <tr
+                                                    key={`${row.original}-${idx}`}
+                                                >
+                                                    <td
+                                                        style={{
+                                                            borderTop:
+                                                                "1px solid #DEDCD2",
+                                                            padding: 8,
+                                                        }}
+                                                    >
+                                                        {row.original}
+                                                    </td>
+                                                    <td
+                                                        style={{
+                                                            borderTop:
+                                                                "1px solid #DEDCD2",
+                                                            padding: 8,
+                                                        }}
+                                                    >
+                                                        {row.proposition}
+                                                    </td>
+                                                    <td
+                                                        style={{
+                                                            borderTop:
+                                                                "1px solid #DEDCD2",
+                                                            padding: 8,
+                                                        }}
+                                                    >
+                                                        {row.categorie}
+                                                    </td>
+                                                    <td
+                                                        style={{
+                                                            borderTop:
+                                                                "1px solid #DEDCD2",
+                                                            padding: 8,
+                                                        }}
+                                                    >
+                                                        {row.explication}
+                                                    </td>
+                                                </tr>
+                                            ))
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </section>
+
+                        <section style={{ marginBottom: 16 }}>
+                            <h3
+                                style={{
+                                    ...headingStyle,
+                                    margin: "0 0 8px",
+                                    fontSize: 18,
+                                }}
+                            >
+                                Alternatives complètes
+                            </h3>
+                            <div
+                                className="plume-alternatives"
+                                style={{
+                                    display: "grid",
+                                    gridTemplateColumns:
+                                        "repeat(auto-fit, minmax(min(100%, 260px), 1fr))",
+                                    gap: 12,
+                                }}
+                            >
+                                {[
+                                    {
+                                        label: "A · Professionnelle",
+                                        content: rewriteA,
+                                    },
+                                    {
+                                        label: "B · Engageante",
+                                        content: rewriteB,
+                                    },
+                                ].map((item) => (
+                                    <article
+                                        key={item.label}
+                                        style={{
+                                            border: "1px solid #DEDCD2",
+                                            borderRadius: 10,
+                                            background: "#FFFEFA",
+                                            padding: 12,
+                                        }}
+                                    >
+                                        <div
+                                            style={{
+                                                display: "flex",
+                                                justifyContent: "space-between",
+                                                gap: 8,
+                                                marginBottom: 8,
+                                            }}
+                                        >
+                                            <strong style={{ fontSize: 13 }}>
+                                                {item.label}
+                                            </strong>
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    handleCopy(
+                                                        item.label,
+                                                        item.content
+                                                    )
+                                                }
+                                                style={{
+                                                    border: "1px solid #DEDCD2",
+                                                    background: "transparent",
+                                                    borderRadius: 8,
+                                                    padding: "6px 8px",
+                                                    fontSize: 11,
+                                                    cursor: "pointer",
+                                                }}
+                                            >
+                                                Copier
+                                            </button>
+                                        </div>
+                                        <pre
+                                            style={{
+                                                margin: 0,
+                                                whiteSpace: "pre-wrap",
+                                                fontFamily: "inherit",
+                                                fontSize: 12,
+                                                lineHeight: 1.45,
+                                            }}
+                                        >
+                                            {item.content}
+                                        </pre>
+                                    </article>
+                                ))}
+                            </div>
+                            <div
+                                aria-live="polite"
+                                style={{ marginTop: 8, fontSize: 11 }}
+                            >
+                                {copyStatus || copyError}
+                            </div>
+                        </section>
+                    </>
+                )}
+
+                <footer
+                    style={{
+                        marginTop: 24,
+                        fontSize: 12,
+                        borderTop: "1px solid #DEDCD2",
+                        paddingTop: 12,
+                        opacity: 0.9,
+                    }}
+                >
+                    <strong>{brand}</strong> / L’essentiel de vos idées. Rien de
+                    moins.
+                </footer>
+            </div>
+
+            {modal !== null && (
+                <div
+                    role="presentation"
+                    onClick={(event) => {
+                        if (event.target === event.currentTarget) {
+                            closeModal()
+                        }
+                    }}
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        background: "rgba(41,46,41,0.35)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: 16,
+                        zIndex: 50,
+                    }}
+                >
+                    <div
+                        className="plume-dialog"
+                        ref={modalRef}
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label={
+                            modal === "approval"
+                                ? "Validation avant affinage"
+                                : "Offre Premium simulée"
+                        }
+                        style={{
+                            width: "100%",
+                            maxWidth: 560,
+                            maxHeight: "90vh",
+                            overflowY: "auto",
+                            background: "#FFFEFA",
+                            border: "1px solid #DEDCD2",
+                            borderRadius: 12,
+                            padding: 18,
+                        }}
+                    >
+                        {modal === "approval" ? (
+                            <>
+                                <h2
+                                    style={{
+                                        ...headingStyle,
+                                        margin: "0 0 6px",
+                                        fontSize: 22,
+                                    }}
+                                >
+                                    Validation avant affinage
+                                </h2>
+                                <p style={{ margin: "0 0 10px", fontSize: 13 }}>
+                                    Statut : <strong>attente validation</strong>
+                                </p>
+                                <p style={{ margin: "0 0 12px", fontSize: 13 }}>
+                                    Stratégie proposée : conserver votre
+                                    intention, corriger les points de langue
+                                    explicites et ajouter seulement des
+                                    compléments facultatifs. Cette étape
+                                    n’infère pas d’intentions cachées et ne crée
+                                    pas d’analyse personnalisée.
+                                </p>
+                                <div
+                                    style={{
+                                        display: "grid",
+                                        gap: 8,
+                                        marginBottom: 12,
+                                    }}
+                                >
+                                    {additionsList.map((item, idx) => {
+                                        const checked =
+                                            selectedAdditions.includes(item.id)
+                                        return (
+                                            <label
+                                                key={`${item.id}-${idx}`}
+                                                style={{
+                                                    display: "flex",
+                                                    gap: 8,
+                                                    border: "1px solid #DEDCD2",
+                                                    borderRadius: 8,
+                                                    padding: 8,
+                                                    cursor: "pointer",
+                                                }}
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    checked={checked}
+                                                    onChange={() =>
+                                                        toggleAddition(item.id)
+                                                    }
+                                                    aria-label={`Sélectionner ajout ${idx + 1}`}
+                                                />
+                                                <span style={{ fontSize: 13 }}>
+                                                    {item.label}
+                                                </span>
+                                            </label>
+                                        )
+                                    })}
+                                </div>
+                                <div
+                                    style={{
+                                        display: "flex",
+                                        justifyContent: "flex-end",
+                                        gap: 8,
+                                    }}
+                                >
+                                    <button
+                                        type="button"
+                                        onClick={closeModal}
+                                        style={{
+                                            border: "1px solid #DEDCD2",
+                                            background: "transparent",
+                                            borderRadius: 8,
+                                            padding: "8px 12px",
+                                            cursor: "pointer",
+                                        }}
+                                    >
+                                        Annuler
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={handleApprove}
+                                        style={{
+                                            border: "1px solid transparent",
+                                            background: accentColor,
+                                            color: "#F7F4EC",
+                                            borderRadius: 8,
+                                            padding: "8px 12px",
+                                            cursor: "pointer",
+                                        }}
+                                    >
+                                        Valider et appliquer
+                                    </button>
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                <div
+                                    style={{
+                                        fontSize: 11,
+                                        textTransform: "uppercase",
+                                        letterSpacing: "0.08em",
+                                        marginBottom: 8,
+                                        border: "1px solid #DEDCD2",
+                                        padding: "4px 8px",
+                                        borderRadius: 999,
+                                        width: "max-content",
+                                    }}
+                                >
+                                    Accès Premium simulé
+                                </div>
+                                <h2
+                                    style={{
+                                        ...headingStyle,
+                                        margin: "0 0 8px",
+                                        fontSize: 22,
+                                    }}
+                                >
+                                    Offre Premium
+                                </h2>
+                                <p style={{ margin: "0 0 10px", fontSize: 13 }}>
+                                    Paiement non connecté — aucun débit.
+                                </p>
+                                <p
+                                    style={{
+                                        margin: "0 0 12px",
+                                        fontSize: 12,
+                                        lineHeight: 1.5,
+                                    }}
+                                >
+                                    14,99 $ premier mois · 11,99 $ mois 2–5
+                                    (environ 20 %) · 7,49 $ mois 6+ (environ 50
+                                    %).
+                                    <br />
+                                    Offre fidélité à vie : proposition visible,
+                                    non activée.
+                                </p>
+                                <div
+                                    style={{
+                                        display: "flex",
+                                        justifyContent: "flex-end",
+                                        gap: 8,
+                                    }}
+                                >
+                                    <button
+                                        type="button"
+                                        onClick={closeModal}
+                                        style={{
+                                            border: "1px solid #DEDCD2",
+                                            background: "transparent",
+                                            borderRadius: 8,
+                                            padding: "8px 12px",
+                                            cursor: "pointer",
+                                        }}
+                                    >
+                                        Fermer
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            React.startTransition(() => {
+                                                setPremiumSimulated(true)
+                                                setModal(null)
+                                            })
+                                        }}
+                                        style={{
+                                            border: "1px solid transparent",
+                                            background: accentColor,
+                                            color: "#F7F4EC",
+                                            borderRadius: 8,
+                                            padding: "8px 12px",
+                                            cursor: "pointer",
+                                        }}
+                                    >
+                                        Essayer le parcours Premium (démo)
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+            )}
+        </div>
+    )
+}
+
+addPropertyControls(PlumeEditor, {
+    brand: {
+        type: ControlType.String,
+        title: "Brand",
+        defaultValue: "0Flaw",
+    },
+    logo: {
+        type: ControlType.ResponsiveImage,
+        title: "Logo",
+    },
+    logoWidth: {
+        type: ControlType.Number,
+        title: "Logo W",
+        defaultValue: 132,
+        min: 60,
+        max: 240,
+        unit: "px",
+    },
+    title: {
+        type: ControlType.String,
+        title: "Title",
+        defaultValue: "Votre voix,\nmieux exprimée.",
+        displayTextArea: true,
+    },
+    subtitle: {
+        type: ControlType.String,
+        title: "Subtitle",
+        defaultValue:
+            "Corrections précises. Idées enrichies. Toujours avec votre accord.",
+    },
+    paperColor: {
+        type: ControlType.Color,
+        title: "Paper",
+        defaultValue: "#FFFEFA",
+    },
+    inkColor: {
+        type: ControlType.Color,
+        title: "Ink",
+        defaultValue: "#292E29",
+    },
+    accentColor: {
+        type: ControlType.Color,
+        title: "Accent",
+        defaultValue: "#485842",
+    },
+    bodyFont: {
+        type: ControlType.Font,
+        title: "Body Font",
+        controls: "extended",
+        defaultFontType: "sans-serif",
+        defaultValue: {
+            fontSize: "15px",
+            variant: "Medium",
+            letterSpacing: "-0.01em",
+            lineHeight: "1.35em",
+        },
+    },
+    headingFont: {
+        type: ControlType.Font,
+        title: "Heading Font",
+        controls: "extended",
+        defaultFontType: "sans-serif",
+        defaultValue: {
+            variant: "Regular",
+            letterSpacing: "-0.03em",
+            lineHeight: "1.02em",
+        },
+    },
+})
